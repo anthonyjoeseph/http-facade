@@ -1,22 +1,12 @@
 import type { IncomingMessage, ServerResponse } from 'http'
 import type { Readable } from 'stream'
-import type { HttpRequest, HttpResponse, RequestHeaders, Method, HttpStreamingRequest, HttpStreamingResponse } from './types'
-import { pipe } from 'fp-ts/function'
-import * as A from 'fp-ts/ReadonlyArray'
-import * as R from 'fp-ts/ReadonlyRecord'
+import type { HttpRequest, HttpResponse, Method, HttpStreamingRequest, HttpStreamingResponse } from './types'
 import * as i from 'ix/asynciterable'
-
-export const groupRequestHeaders = (rawHeaders: string[]) => pipe(
-  rawHeaders,
-  A.chunksOf(2),
-  A.map(([key, value]) => [key.toLowerCase(), [value]] as const),
-  R.fromFoldable(A.getSemigroup<string>(), A.Foldable)
-) as RequestHeaders
 
 export const readableToString = (req: Readable) =>
   i.toArray(req).then(Buffer.concat).then(b => b.toString())
 
-export const requestListener = (
+export const requestListenerFacade = (
   requestListener: (req: HttpRequest) => Promise<HttpResponse>
 ) => async (req: IncomingMessage, res: ServerResponse) => {
   const { 
@@ -25,8 +15,8 @@ export const requestListener = (
     headers: respHeaders, 
     body: respBody, 
   } = await requestListener({
+    ...req,
     body: await readableToString(req),
-    headers: groupRequestHeaders(req.rawHeaders),
     method: req.method as Method
   })
   res.writeHead(statusCode, statusMessage, respHeaders)
@@ -34,7 +24,7 @@ export const requestListener = (
   res.end()
 }
 
-export const streamingRequestListener = (
+export const streamingRequestListenerFacade = (
   requestListener: (req: HttpStreamingRequest) => Promise<HttpStreamingResponse>
 ) => async (req: IncomingMessage, res: ServerResponse) => {
   const { 
@@ -42,15 +32,18 @@ export const streamingRequestListener = (
     statusMessage,
     headers: respHeaders, 
     body: respBody, 
+    trailers,
   } = await requestListener({
+    ...req,
     body: req,
-    headers: groupRequestHeaders(req.rawHeaders),
-    method: req.method as Method
+    method: req.method as Method,
   })
   res.writeHead(statusCode, statusMessage, respHeaders)
+  if (trailers) {
+    res.addTrailers(trailers)
+  }
   if (respBody) {
     respBody.pipe(res)
-    respBody.on('error', () => res.end())
     respBody.on('close', () => res.end())
   } else {
     res.end()

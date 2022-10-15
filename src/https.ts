@@ -1,30 +1,36 @@
 import https, { ServerOptions } from 'https'
 import type { IncomingMessage, ServerResponse } from 'http'
 import type { HttpRequest, HttpResponse, HttpStreamingRequest, HttpStreamingResponse } from './types'
-import { requestListener, streamingRequestListener } from './requestListeners'
+import { requestListenerFacade, streamingRequestListenerFacade } from './requestListeners'
 
-export const createServer = ({
-  port,
-  requestListener: simpleRequestListener,
-  httpsOptions,
-}: {
-  port: number, 
+/**
+ * Does not handle any errors. Request body parsing errors
+ * will be unhandled
+ * @param httpsOptions - see https.ServerOptions
+ * @param port - optional, default 443
+ * @returns http.Server instance
+ */
+export const serve = (
+  httpsOptions: ServerOptions<typeof IncomingMessage, typeof ServerResponse>,
   requestListener: (req: HttpRequest) => Promise<HttpResponse>,
-  httpsOptions: ServerOptions<typeof IncomingMessage, typeof ServerResponse>
-}) => https.createServer(
+  port = 443,
+) => https.createServer(
   httpsOptions,
-  requestListener(simpleRequestListener)
+  requestListenerFacade(requestListener)
 ).listen(port)
 
-export const createStreamingServer = ({
-  port,
-  requestListener: simpleStreamingRequestListener,
-  httpsOptions,
-}:{
-  port: number, 
+/**
+ * Body stream must close and errors must be handled,
+ * or else the response stream will not end
+ * @param httpsOptions - see https.ServerOptions
+ * @param port - optional, default 443
+ * @returns http.Server instance
+ */
+export const serveStreaming = (
+  httpsOptions: ServerOptions<typeof IncomingMessage, typeof ServerResponse>,
   requestListener: (req: HttpStreamingRequest) => Promise<HttpStreamingResponse>,
-  httpsOptions: ServerOptions<typeof IncomingMessage, typeof ServerResponse>
-}) =>  https.createServer(
+  port = 443,
+) => https.createServer(
   httpsOptions,
-  streamingRequestListener(simpleStreamingRequestListener)
+  streamingRequestListenerFacade(requestListener)
 ).listen(port)
