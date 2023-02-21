@@ -1,27 +1,42 @@
 import type { IncomingMessage, ServerResponse } from 'http'
-import type { Readable } from 'stream'
+import { Readable } from 'stream'
 import type { HttpRequest, HttpResponse, Method, HttpStreamingRequest, HttpStreamingResponse } from './types'
-import * as i from 'ix/asynciterable'
 
-export const readableToString = (req: Readable) =>
-  i.toArray(req).then(Buffer.concat).then(b => b.toString())
+// parse streaming json
+// https://datastation.multiprocess.io/blog/2022-01-06-analyzing-large-json-files-via-partial-json-parsing.html
+// https://github.com/juanjoDiaz/streamparser-json
+// https://github.com/dscape/clarinet
 
 export const requestListenerFacade = (
-  requestListener: (req: HttpRequest) => Promise<HttpResponse>
+  requestListener: (req: HttpRequest) => Promise<HttpResponse>,
+  streamingInterrupted: { handle: (fragment: HttpRequest) => void }
 ) => async (req: IncomingMessage, res: ServerResponse) => {
-  const { 
-    statusCode = 200,
-    statusMessage,
-    headers: respHeaders, 
-    body: respBody, 
-  } = await requestListener({
-    ...req,
-    body: await readableToString(req),
-    method: req.method as Method
-  })
-  res.writeHead(statusCode, statusMessage, respHeaders)
-  if (respBody) res.write(respBody)
-  res.end()
+  let body = ""
+  Readable.from(req)
+    .on('data', (str) => {
+      body += str.toString('utf-8')
+    })
+    .on('end', async () => {
+      const fullRequest = {
+        ...req,
+        body: body,
+        method: req.method as Method
+      }
+      if (!req.complete) {
+        streamingInterrupted.handle(fullRequest)
+        res.end()
+      } else {
+        const {
+          statusCode = 200,
+          statusMessage,
+          headers: respHeaders,
+          body: respBody,
+        } = await requestListener(fullRequest)
+        res.writeHead(statusCode, statusMessage, respHeaders)
+        if (respBody) res.write(respBody)
+        res.end()
+      }
+    })
 }
 
 export const streamingRequestListenerFacade = (
@@ -37,6 +52,7 @@ export const streamingRequestListenerFacade = (
     ...req,
     body: req,
     method: req.method as Method,
+    url: req.url as string
   })
   res.writeHead(statusCode, statusMessage, respHeaders)
   if (trailers) {
